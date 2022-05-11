@@ -1,0 +1,34 @@
+ABCD:
+    format: ModECI MDF v0.3
+    generating_application: Python modeci-mdf v0.3.2
+    graphs:
+        abcd_example:
+            nodes:
+                A:
+                    metadata:
+                        color: 0 .8 0
+                    input_ports:
+                        input_port1: {}
+                    parameters:
+                        leak: 
+                            value: 1.0
+                        competition: 
+                            value: 0.0
+                        threshold: 
+                            value: 1.0
+                        time_step:
+                            value: 0.1
+                        max_iterations: 
+                            value: 1000
+                        lca_func:
+                            function: lca
+                            args:
+                                variable0: input_port1
+                                leak: leak
+                                competition: competition
+                                threshold: threshold
+                                time_step: time_step
+                                max_iterations: max_iterations
+                    output_ports:
+                        output_1:
+                            value: lca_func 

@@ -4,15 +4,6 @@ ABCD:
   graphs:
     abcd_example:
       nodes:
-        input0:
-          metadata:
-            color: .8 .8 .8
-          parameters:
-            input_level:
-              value: 0.0
-          output_ports:
-            out_port:
-              value: input_level
         A:
           metadata:
             color: .8 0 0
@@ -20,9 +11,9 @@ ABCD:
             input_port1: {}
           parameters:
             slope:
-              value: 1.1
+              value: 0.0
             intercept:
-              value: 1.2
+              value: 0.0
             linear_func:
               function: linear
               args:
@@ -38,22 +29,28 @@ ABCD:
           input_ports:
             input_port1: {}
           parameters:
-            gain:
-              value: 2.1
-            bias:
-              value: 2.2
-            offset:
-              value: 2.3
-            logistic_func:
-              function: logistic
+            leak:
+              value: 1.0
+            competition:
+              value: 0.0
+            threshold:
+              value: 1.0
+            time_step:
+              value: 0.1
+            max_iterations:
+              value: 1000
+            lca_func:
+              function: lca
               args:
                 variable0: input_port1
-                gain: gain
-                bias: bias
-                offset: offset
+                leak: leak
+                competition: competition
+                threshold: threshold
+                time_step: time_step
+                max_iterations: max_iterations
           output_ports:
             output_1:
-              value: logistic_func
+              value: lca_func
         C:
           metadata:
             color: 0 0 .8
@@ -98,11 +95,6 @@ ABCD:
             output_1:
               value: sin_func
       edges:
-        edge_input0_A:
-          sender: input0
-          receiver: A
-          sender_port: out_port
-          receiver_port: input_port1
         edge_A_B:
           sender: A
           receiver: B

@@ -9,14 +9,13 @@ from modeci_mdf.execution_engine import EvaluableGraph
 
 # tf.config.run_functions_eagerly(True)
 
+
 def test_export_abcd():
     abcd_mdf = load_mdf("examples/MDF/ABCD.yaml")
     converted_graphs = model_to_tensorflow(abcd_mdf)
     tf_graph = list(converted_graphs.values())[0]
 
-    tf_results = tf_graph(
-        {"input0": {"input_level": tf.constant(0.0, dtype=tf.double)}}
-    )
+    tf_results, new_ctx = tf_graph(tf_graph.generate_node_contexts())
     mdf = EvaluableGraph(graph=abcd_mdf.graphs[0])
     # FIXME: this doesn't actually initialize anything?
     mdf.evaluate(initializer={"input0": 0.0})
@@ -34,14 +33,13 @@ def test_export_abcd():
 
     assert all_equal
 
+
 def test_export_abc_conditions():
     abcd_mdf = load_mdf("examples/MDF/abc_conditions.yaml")
     converted_graphs = model_to_tensorflow(abcd_mdf)
     tf_graph = list(converted_graphs.values())[0]
 
-    tf_results = tf_graph(
-        {"input0": {"input_level": tf.constant(0.0, dtype=tf.double)}}
-    )
+    tf_results = tf_graph()
     mdf = EvaluableGraph(graph=abcd_mdf.graphs[0])
     # FIXME: this doesn't actually initialize anything?
     mdf.evaluate(initializer={"input0": 0.0})
@@ -96,15 +94,14 @@ def test_export_abcd_lca():
             start_t = timeit.default_timer()
             call_fun = tf.autograph.to_code(tf_graph.__call__.python_function)
             print(call_fun)
-            result = tf_graph({"A": tf.constant([0.0, 0.0, 0.0, 0.0], dtype=tf.double)})
+            node_contexts = tf_graph.generate_node_contexts()
+            result = tf_graph(node_contexts)
             end_t = timeit.default_timer()
             warmup_t = end_t - start_t
             total_t = 0
             for i in range(0, 5):
                 start_t = timeit.default_timer()
-                result = tf_graph(
-                    {"A": tf.constant([0.0, 0.0, 0.0, 0.0], dtype=tf.double)}
-                )
+                result = tf_graph(node_contexts)
                 end_t = timeit.default_timer()
                 total_t += end_t - start_t
             total_t /= 5
