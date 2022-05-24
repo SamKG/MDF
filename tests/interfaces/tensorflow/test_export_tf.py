@@ -1,9 +1,12 @@
 import contextlib
 import timeit
-import numpy as np
-from modeci_mdf.interfaces.tensorflow.exporter import model_to_tensorflow
+from modeci_mdf.interfaces.tensorflow.exporter import (
+    GridSearchNode,
+    model_to_tensorflow,
+)
 
 import tensorflow as tf
+from modeci_mdf.mdf import Node
 from modeci_mdf.utils import load_mdf
 from modeci_mdf.execution_engine import EvaluableGraph
 
@@ -32,6 +35,47 @@ def test_export_abcd():
     ]
 
     assert all_equal
+
+
+def test_gridsearch():
+    abcd_mdf = load_mdf("examples/MDF/ABCD.yaml")
+    converted_graphs = model_to_tensorflow(abcd_mdf)
+    tf_graph = list(converted_graphs.values())[0]
+
+    tf_results, new_ctx = tf_graph(tf_graph.generate_node_contexts())
+    gridsearch_node = GridSearchNode(abcd_mdf.graphs[0].nodes[0], tf_graph)
+    gridsearch_ctx = gridsearch_node.generate_node_context()
+
+    @contextlib.contextmanager
+    def options(options):
+        old_opts = tf.config.optimizer.get_experimental_options()
+        tf.config.optimizer.set_experimental_options(options)
+        try:
+            yield
+        finally:
+            tf.config.optimizer.set_experimental_options(old_opts)
+
+    opts = {
+        "layout_optimizer": True,
+        "constant_folding": True,
+        "shape_optimization": True,
+        "remapping": True,
+        "arithmetic_optimization": True,
+        "dependency_optimization": True,
+        "loop_optimization": True,
+        "function_optimization": True,
+        "debug_stripper": True,
+        "disable_model_pruning": True,
+        "scoped_allocator_optimization": True,
+        "pin_to_host_optimization": True,
+        "implementation_selector": True,
+        "auto_mixed_precision": True,
+    }
+    with options(opts):
+        outputs, ctx = gridsearch_node(gridsearch_ctx)
+        g = tf.autograph.to_graph(gridsearch_node.__call__.python_function)
+        print(g)
+    # tf_graph.graph_nodes[""]
 
 
 def test_export_abc_conditions():

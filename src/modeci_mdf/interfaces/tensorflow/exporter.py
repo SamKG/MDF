@@ -1,14 +1,13 @@
 """
 Functions for converting from MDF models to PyTorch models.
 """
-import copy
-from platform import node
-from typing import Callable, Dict, List, NamedTuple, Set, Tuple, Union
-import tensorflow as tf
-from modeci_mdf.execution_engine import EvaluableGraph
+from typing import Callable, Dict, NamedTuple, Set, Tuple, Union
 
+import tensorflow as tf
+
+from modeci_mdf.execution_engine import EvaluableGraph
 from modeci_mdf.interfaces.tensorflow.builtins import get_builtin
-from modeci_mdf.mdf import Condition, ConditionSet, Edge, Graph, Model, Node, Parameter
+from modeci_mdf.mdf import Graph, Model, Node, Parameter
 
 
 def is_function_param(parameter: Parameter) -> bool:
@@ -38,20 +37,15 @@ class TFNode(tf.Module):
     def generate_node_context(self) -> TFNodeContext:
         return TFNodeContext(
             parameter_ctx=dict((p, t) for (p, t) in self.nonfunc_params.items()),
-            input_port_ctx=dict((p, None) for p in self.input_port_ids),
+            input_port_ctx=dict(
+                (p, tf.constant(0.0, dtype=tf.double, name=p)) for p in self.input_port_ids
+            ),
             metadata=TFNodeMetadata(num_executions=tf.constant(0, dtype=tf.int32)),
         )
 
     def __init__(self, node: Node):
         super(TFNode, self).__init__(name=node.get_id())
 
-        self.param_ids: Set[str] = set(param.get_id() for param in node.parameters)
-        self.nonfunc_param_ids: Set[str] = set(
-            p.get_id() for p in node.parameters if not is_function_param(p)
-        )
-        self.func_param_ids: Set[str] = set(
-            p.get_id() for p in node.parameters if is_function_param(p)
-        )
         self.func_params: Dict[str, Callable] = {
             p.get_id(): parameter_to_tensorflow(p)
             for p in node.parameters
@@ -175,6 +169,33 @@ class TFGraph(tf.Module):
                 conditions = self.node_conditions[node_id]
 
         return node_outputs, node_ctxs
+
+
+class GridSearchNode(TFNode):
+    def generate_node_context(self) -> TFNodeContext:
+        return TFNodeContext(
+            parameter_ctx=dict((p, t) for (p, t) in self.nonfunc_params.items()),
+            input_port_ctx=dict(
+                (p, tf.constant(0.0, dtype=tf.double)) for p in self.input_port_ids
+            ),
+            metadata=TFNodeMetadata(num_executions=tf.constant(0, dtype=tf.int32)),
+        )
+
+    def __init__(self, node: Node, subgraph: TFGraph):
+        super(GridSearchNode, self).__init__(node=node)
+        self.subgraph = subgraph
+
+    @tf.function
+    def __call__(self, node_ctx: TFNodeContext):
+        # node_ctx.metadata.num_executions = (
+        #     node_ctx.metadata.num_executions + tf.constant(1, dtype=tf.int32)
+        # )
+
+        subgraph_context = self.subgraph.generate_node_contexts()
+        for i in range(0, 100):
+            self.subgraph(subgraph_context)
+
+        return {}, node_ctx
 
 
 def graph_to_tensorflow(graph: Graph) -> TFGraph:

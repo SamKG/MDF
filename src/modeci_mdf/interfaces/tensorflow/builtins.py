@@ -40,8 +40,9 @@ def lca(
     competition: tf.Tensor,
     threshold: tf.Tensor,
     time_step: tf.Tensor,
-    max_iterations: int,
+    max_iterations: tf.Tensor,
 ) -> tf.Tensor:
+    max_iterations = tf.cast(max_iterations, tf.int32)
     active = tf.ones_like(variable0)
     rts = tf.zeros_like(variable0)
 
@@ -67,7 +68,7 @@ def lca(
         active = tf.where(
             tf.abs(variable0) < threshold, tf.ones_like(rts), tf.zeros_like(rts)
         )
-        dw = tf.random.normal(variable_shape)
+        dw = tf.random.normal(variable_shape, dtype=tf.double)
         left = dp * time_step
         right = dw * tf.sqrt(time_step)
         variable0 = variable0 + active * (left + right)
@@ -98,6 +99,7 @@ def lca(
         lca_body,
         (loop_ct, variable0, active, rts, leak, competition, threshold, time_step),
         parallel_iterations=1,
+        shape_invariants=None,
         maximum_iterations=max_iterations,
     )
     # tf.print(loop_ct, max_iterations, output_stream=sys.stdout)
