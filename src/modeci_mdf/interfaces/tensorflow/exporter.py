@@ -1,12 +1,14 @@
 """
 Functions for converting from MDF models to PyTorch models.
 """
-from typing import Callable, Dict, NamedTuple, Set, Tuple, Union
+from typing import Callable, Dict, Set, Tuple, Union
 
 import tensorflow as tf
 
 from modeci_mdf.execution_engine import EvaluableGraph
 from modeci_mdf.interfaces.tensorflow.builtins import get_builtin
+from modeci_mdf.interfaces.tensorflow.classes import TFNodeContext, TFNodeMetadata
+from modeci_mdf.interfaces.tensorflow.tf_conditions import create_condition
 from modeci_mdf.mdf import Graph, Model, Node, Parameter
 
 
@@ -23,22 +25,13 @@ def parameter_to_tensorflow(parameter: Parameter) -> tf.Operation:
         raise Exception(f"Don't know how to convert parameter {parameter}!")
 
 
-class TFNodeMetadata(NamedTuple):
-    num_executions: tf.Tensor
-
-
-class TFNodeContext(NamedTuple):
-    parameter_ctx: Dict[str, tf.Tensor]
-    input_port_ctx: Dict[str, tf.Tensor]
-    metadata: TFNodeMetadata
-
-
 class TFNode(tf.Module):
     def generate_node_context(self) -> TFNodeContext:
         return TFNodeContext(
             parameter_ctx=dict((p, t) for (p, t) in self.nonfunc_params.items()),
             input_port_ctx=dict(
-                (p, tf.constant(0.0, dtype=tf.double, name=p)) for p in self.input_port_ids
+                (p, tf.constant(0.0, dtype=tf.double, name=p))
+                for p in self.input_port_ids
             ),
             metadata=TFNodeMetadata(num_executions=tf.constant(0, dtype=tf.int32)),
         )
@@ -73,10 +66,6 @@ class TFNode(tf.Module):
 
     @tf.function
     def __call__(self, node_ctx: TFNodeContext):
-        # node_ctx.metadata.num_executions = (
-        #     node_ctx.metadata.num_executions + tf.constant(1, dtype=tf.int32)
-        # )
-
         func_outputs = {}
         for (func_id, function) in self.func_params.items():
             func_args = {}
@@ -98,6 +87,13 @@ class TFNode(tf.Module):
             elif v in node_ctx.input_port_ctx:
                 output_ports[o] = node_ctx.input_port_ctx[v]
 
+        updated_metadata = TFNodeMetadata.step_numexecutions(node_ctx.metadata)
+        node_ctx = TFNodeContext(
+            metadata=updated_metadata,
+            parameter_ctx=node_ctx.parameter_ctx,
+            input_port_ctx=node_ctx.input_port_ctx,
+        )
+
         return output_ports, node_ctx
 
 
@@ -116,11 +112,20 @@ class TFGraph(tf.Module):
             set(n.get_id() for n in s) for s in scheduler.consideration_queue
         ]
 
-        self.node_conditions = {n.get_id(): {} for n in graph.nodes}
-
         self.graph_nodes: Dict[str, TFNode] = {}
         for n in graph.nodes:
             self.graph_nodes[n.get_id()] = node_to_tensorflow(n)
+
+        self.node_conditions = {
+            node_id: create_condition(spec["type"], spec)
+            for (node_id, spec) in graph.conditions.node_specific.items()
+        }
+
+        self.termination_condition = create_condition(
+            graph.conditions.termination["environment_state_update"]["type"],
+            graph.conditions.termination["environment_state_update"],
+        )
+
         self.graph_edges: Dict[str, Tuple[str, str, str]] = {
             n.get_id(): [] for n in graph.nodes
         }
@@ -134,66 +139,63 @@ class TFGraph(tf.Module):
         self,
         node_ctxs: Dict[str, TFNodeContext],
     ):
-        active_nodes = {}
-        for node_id in self.graph_nodes.keys():
-            active_nodes[node_id] = True
-
         node_outputs = {}
-        for exec_set in self.consideration_queue:
-            for node_id in exec_set:
-                if not active_nodes[node_id]:
-                    continue
-                outputs, node_ctx = self.graph_nodes[node_id](node_ctxs[node_id])
+        node_ctxs = node_ctxs.copy()
 
-                node_outputs[node_id] = outputs
-                node_ctxs = {
-                    k: v if k != node_id else node_ctx for (k, v) in node_ctxs.items()
-                }
+        while not self.termination_condition(node_ctxs):
+            active_nodes = {k: True for k in self.graph_nodes.keys()}
 
-                for (sender_port, receiver_id, receiver_port) in self.graph_edges[
-                    node_id
-                ]:
-                    receiver_ctx = node_ctxs[receiver_id]
-                    copied_node_ctx = TFNodeContext(
-                        parameter_ctx=receiver_ctx.parameter_ctx,
-                        input_port_ctx={
-                            k: v if k != receiver_port else outputs[sender_port]
-                            for (k, v) in receiver_ctx.input_port_ctx.items()
-                        },
-                        metadata=receiver_ctx.metadata,
-                    )
+            for exec_set in self.consideration_queue:
+                for node_id in exec_set:
+                    if node_id in self.node_conditions and not self.node_conditions[
+                        node_id
+                    ](node_ctxs):
+                        active_nodes[node_id] = False
+
+                    if not active_nodes[node_id]:
+                        continue
+                    outputs, node_ctx = self.graph_nodes[node_id](node_ctxs[node_id])
+
+                    node_outputs = {
+                        k: v if k != node_id else outputs
+                        for (k, v) in node_outputs.items()
+                    }
+
                     node_ctxs = {
-                        k: v if k != receiver_id else copied_node_ctx
+                        k: v if k != node_id else node_ctx
                         for (k, v) in node_ctxs.items()
                     }
-                conditions = self.node_conditions[node_id]
+
+                    for (sender_port, receiver_id, receiver_port) in self.graph_edges[
+                        node_id
+                    ]:
+                        receiver_ctx = node_ctxs[receiver_id]
+                        copied_node_ctx = TFNodeContext(
+                            parameter_ctx=receiver_ctx.parameter_ctx,
+                            input_port_ctx={
+                                k: v if k != receiver_port else outputs[sender_port]
+                                for (k, v) in receiver_ctx.input_port_ctx.items()
+                            },
+                            metadata=receiver_ctx.metadata,
+                        )
+                        node_ctxs = {
+                            k: v if k != receiver_id else copied_node_ctx
+                            for (k, v) in node_ctxs.items()
+                        }
 
         return node_outputs, node_ctxs
 
 
 class GridSearchNode(TFNode):
-    def generate_node_context(self) -> TFNodeContext:
-        return TFNodeContext(
-            parameter_ctx=dict((p, t) for (p, t) in self.nonfunc_params.items()),
-            input_port_ctx=dict(
-                (p, tf.constant(0.0, dtype=tf.double)) for p in self.input_port_ids
-            ),
-            metadata=TFNodeMetadata(num_executions=tf.constant(0, dtype=tf.int32)),
-        )
-
     def __init__(self, node: Node, subgraph: TFGraph):
         super(GridSearchNode, self).__init__(node=node)
         self.subgraph = subgraph
+        self.var = tf.Variable([[0.0] * 10] * 10, dtype=tf.double)
 
-    @tf.function
-    def __call__(self, node_ctx: TFNodeContext):
-        # node_ctx.metadata.num_executions = (
-        #     node_ctx.metadata.num_executions + tf.constant(1, dtype=tf.int32)
-        # )
-
-        subgraph_context = self.subgraph.generate_node_contexts()
-        for i in range(0, 100):
-            self.subgraph(subgraph_context)
+    @tf.function()
+    def __call__(self, node_ctx: TFNodeContext, subgraph: TFGraph):
+        for i in range(0, 10):
+            subgraph(subgraph.generate_node_contexts())
 
         return {}, node_ctx
 

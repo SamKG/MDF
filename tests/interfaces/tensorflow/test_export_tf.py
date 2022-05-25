@@ -83,7 +83,7 @@ def test_export_abc_conditions():
     converted_graphs = model_to_tensorflow(abcd_mdf)
     tf_graph = list(converted_graphs.values())[0]
 
-    tf_results = tf_graph()
+    tf_results, new_ctx = tf_graph(tf_graph.generate_node_contexts())
     mdf = EvaluableGraph(graph=abcd_mdf.graphs[0])
     # FIXME: this doesn't actually initialize anything?
     mdf.evaluate(initializer={"input0": 0.0})
@@ -91,7 +91,6 @@ def test_export_abc_conditions():
         k: {p: q.curr_value for (p, q) in v.evaluable_outputs.items()}
         for (k, v) in mdf.enodes.items()
     }
-    # FIXME: significant difference in results (precision related?)
     all_equal = [
         all(
             abs(x - y) <= 0.0000001
